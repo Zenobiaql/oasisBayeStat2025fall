@@ -1,0 +1,30 @@
+Package: oasisBayeStat2025fall
+Type: Package
+Title: A Streamlined R Realization of OASIS
+Version: 1.0.0
+Date: 2025-12-16
+Author: Qilin Zhang
+Maintainer: Qilin Zhang <zhangqilin8879@mail.ustc.edu.cn>
+Description: A compact R edition of Online Active
+  Set method to Infer Spikes (OASIS) by Friedrich J. et al. (2017)
+  <doi:10.1371/journal.pcbi.1005423>.
+License: GPL (>= 2)
+Imports:
+  Rcpp
+Suggests:
+  knitr,
+  rmarkdown,
+  ggplot2,
+  microbenchmark,
+  rbenchmark,
+  boot,
+  bootstrap
+LinkingTo:
+  Rcpp, 
+  RcppArmadillo
+VignetteBuilder: knitr
+LazyData: true
+RoxygenNote: 7.3.3
+Encoding: UTF-8
+Depends:
+    R (>= 3.5)

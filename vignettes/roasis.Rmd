@@ -1,0 +1,307 @@
+---
+title: "Introduction to roasis"
+author: "Qilin Zhang"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to roasis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+library(oasisBayeStat2025fall)
+```
+
+The `roasis` package provides a streamlined R implementation of the OASIS (Online Active Set method for Spikes) algorithm, focusing specifically on the core AR(1) deconvolution model, offering a lightweight and efficient solution powered by a C++ (Rcpp) backend.
+
+## Background
+
+Neural information is primarily transmitted via electrical action potentials. These electrical events, often referred to as spikes, trigger intracellular calcium transients, serving as an optical proxy for neuronal activity. However, due to the slow calcium decay kinetics, fluorescence signals evoked by high-frequency spiking tend to temporally summate. 
+
+By assuming that calcium decay kinetics are independent of concentration and the fluorescence intensity is proportional to calcium level, we can model the relationship between fluorescence and spiking as a Linear Time-Invariant (LTI) system with Gaussian noise. In this framework, the observed fluorescence is mathematically the convolution of the spike train with the calcium impulse response. 
+
+By modeling this response as an autoregressive process (i.e., exponential decay), the deconvolution problem can be solved efficiently. This is the core principle behind **OASIS** (Online Active Set method to Infer Spikes). The `roasis` package provides a compact R implementation of this method, allowing users to easily deconvolve fluorescence traces into underlying neuronal activity.
+
+## Data Simulation and the AR(1) Model
+
+To validate the performance of the deconvolution algorithm, `roasis` provides a built-in simulation engine. The synthetic data generation is grounded in the Linear Time-Invariant (LTI) system assumption.
+
+Specifically, we assume that in the absence of new spikes, the calcium concentration $c_t$ decays exponentially. In the discrete-time domain, this dynamic is modeled as an AutoRegressive process of order $p$ (AR($p$)). For an AR(1) process, the model is defined as:
+$$
+c_t = \gamma c_{t-1} + s_t, \quad s_t \geq 0,
+$$
+where $\gamma$ corresponds to the time constant of the decay, and $s_t$ represents the spike intensity at time $t$. Consequently, $c_t$ can be viewed as the output of a linear system driven by the sparse input $s_t$.
+
+Assuming the noise is white and Gaussian, the observed fluorescence trace $y_t$ is modeled as the calcium concentration contaminated by additive noise:
+$$
+y_t = c_t + \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, \sigma^2).
+$$
+The `generate_data()` function provides a C++ implementation for efficient synthetic data generation.
+
+```{r syn_data_generation, echo=TRUE}
+# Simulate a dataset with 5 neurons and standard decay kinetics (g=0.95)
+# The function returns the noisy trace (Y), ground truth calcium (c), and spikes (s).
+sim_data <- generate_data(
+  N = 5,          # Number of neurons
+  nf = 1000,      # Number of frames
+  g = 0.95,       # AR(1) decay factor
+  sn = 0.3,       # Noise standard deviation
+  seed = 123      # For reproducibility
+)
+
+# Inspect the structure of the simulation object
+print(sim_data)
+```
+
+## Spike Inference: A Bayesian Framework
+
+From a Bayesian perspective, the goal of spike inference is to maximize the posterior probability of the spike train $s$, given the fluorescence signal $y$. 
+
+According to Bayes' Theorem, the posterior satisfies
+$$
+P(s|y) = \frac{P(y|s)P(s)}{P(y)} \propto P(y|s)P(s).
+$$
+Here, the likelihood $P(y|s)$ captures the generative mechanism, describing how the spike train $s$ produces the observed fluorescence trace $y$. The prior probability $P(s)$ incorporates physiological knowledge, reflecting the assumption that neurons fire sparsely. 
+
+This approach is known as Maximum A Posteriori (MAP) estimation, which transforms the inference problem into the following optimization:
+$$
+\hat{s} = \operatorname*{argmax}_s P(s|y) = \operatorname*{argmax}_s [-\ln P(y|s) - \ln P(s)].
+$$
+
+### From MAP to Optimization
+
+To transform the abstract MAP estimation into a computable objective, we need to specify the mathematical forms of the likelihood and the prior. The optimization goal corresponds to minimizing the negative log-posterior.
+
+#### Likelihood: The Physical Model
+
+Under the assumption of additive Gaussian noise, the probability of observing fluorescence $y_t$ given calcium $c_t$ follows a Gaussian distribution:
+$$
+P(y_t|c_t) = \frac{1}{\sqrt{2\pi}\sigma}\exp\left(-\frac{(y_t-c_t)^2}{2\sigma^2}\right).
+$$
+Taking the negative logarithm, the term becomes proportional to the residual sum of squares (RSS):
+$$
+-\ln P(y|c) \propto \sum_{t=1}^T (y_t - c_t)^2 = ||y-c||^2_2.
+$$
+This constitutes the data fidelity term of our loss function.
+
+#### Prior: The Sparsity Assumption
+
+We assume that neuronal spiking is sparse. This is mathematically modeled by an exponential prior distribution on the spike density $s_t$:
+$$
+P(s_t) \propto \lambda \exp(-\lambda s_t), \quad s_t \ge 0.
+$$
+The negative logarithm of this prior yields an $L_1$ penalty:
+$$
+-\ln P(s) \propto \lambda \sum_{t=1}^T |s_t| = \lambda ||s||_1.
+$$
+Note that for the discrete time bins, this exponential prior is consistent with the inter-arrival times of a Poisson process.
+
+#### Loss Function
+
+By combining the likelihood and the prior (i.e., minimizing the negative log-posterior), we derive the final objective function for the optimization:
+
+$$
+\text{minimize} \quad \mathcal{L} = \frac{1}{2}||y-c||^2_2 + \lambda ||s||_1,
+$$
+subject to the constraint $s_t = c_t - \gamma c_{t-1} \ge 0$.
+
+### PAVA Algorithm: From Constraints to Pooling
+
+Optimizing the loss function above generically would require $O(T^2)$ complexity. However, the specific structure of fluorescence deconvolution allows us to use the Pool Adjacent Violators Algorithm (PAVA) to solve it in linear time $O(T)$.
+
+First, it is necessary to transform the loss function into a single-variant form. As the calcium concentration follows an AR(1) process, the sparsity penalty $\lambda ||s||_1$ can be rewritten as a linear term in $c$, ignoring boundary conditions:
+$$
+\lambda \sum_{t=1}^T s_t = \lambda \sum_{t=1}^T (c_t - \gamma c_{t-1}) \approx \lambda(1-\gamma)\sum_{t=1}^T c_t.
+$$
+Substituting this into the MAP objective, our problem is equivalent to finding a vector $c$ that minimizes the loss,
+$$
+\mathcal{L} = \frac{1}{2}\sum_{t=1}^T (y_t - c_t)^2 + \lambda(1-\gamma)\sum_{t=1}^T c_t,
+$$
+subject to the non-negative spike constraint,
+$$
+s_t \ge 0 \implies c_t \ge \gamma c_{t-1}.
+$$
+
+#### Optimizing by Pool Merging
+
+This is a strictly convex optimization problem with inequality constraints. The logic of PAVA is based on the **Karush-Kuhn-Tucker (KKT)** conditions:
+
+1.  Detection: We scan the data sequentially. If the unconstrained solution satisfies the decay constraint ($c_t \ge \gamma c_{t-1}$), it is already optimal.
+2.  Violation: If the constraint is violated (i.e., the fluorescence drops faster than the natural decay $\gamma$, implying a negative spike), the optimal solution must lie on the boundary of the feasible region.
+3.  Pooling: Lying on the boundary means $s_t = 0$, or equivalently $c_t = \gamma c_{t-1}$. This binds the variables $c_{t-1}$ and $c_t$ together—they are no longer independent but form a single "pool" governed by the same decay dynamics.
+
+By iteratively merging these violating time points into pools and updating their values to satisfy the weighted average, PAVA finds the global optimum in a single backward-forward pass, reducing the complexity to $O(T)$.
+
+## Implementation
+
+`roasis` provides low-level and high-level interfaces to perform OASIS.
+
+### Core Solver: `oasis_ar1`
+
+The core solver leveraging OASIS is function `oasis_ar1` and it is a low-level interface. By specifying known time constant $g$ and adequate regularization parameter $\lambda$, we can get an output with calcium trace, spike train and other parameters.
+
+```{r oasis_ar1, echo=TRUE}
+# Assume we know the parameters
+true_g <- 0.95
+# Heuristic for lambda: usually 2 * noise_std
+true_lambda <- 2 * 0.3 
+
+# Run the core solver
+# y_raw is the fluorescence vector from our simulation
+fit_core <- oasis_ar1(sim_data$Y[1, ], g = true_g, lam = true_lambda)
+
+# The result contains the denoised calcium (c) and spikes (s)
+str(fit_core)
+```
+
+### Noise Estimation
+
+Usually $\lambda$ is specified by $2\sigma$, so we should estimate $\sigma^2$ from data. `roasis` provides a low-level interface for such estimation. 
+
+A naive approach like calculating the standard deviation of the raw trace (`sd(y)`) is problematic because it conflates the variance of the calcium signal with the observation noise, leading to overestimation.
+
+To address this, `roasis` implements a robust estimator based on the Power Spectral Density (PSD). Since calcium transients are predominantly low-frequency signals, the noise floor can be accurately isolated by examining the power in the high-frequency band (default: normalized frequency range $[0.25, 0.5]$).
+
+```{r noise_estimation, echo=TRUE}
+# Let's use the first neuron from our simulated data
+y_trace <- sim_data$Y[1, ]
+true_sn <- 0.3  # We know the ground truth is 0.3
+
+# 1. Naive estimation (Incorrect)
+# This includes the signal variance, leading to a higher value
+sigma_naive <- sd(y_trace)
+
+# 2. Robust estimation using OASIS (Correct)
+# GetSn analyzes the high-frequency noise floor
+sigma_est <- GetSn(y_trace)
+
+# Compare the results
+cat(sprintf("True sigma:  %.4f\n", true_sn))
+cat(sprintf("Naive sd():  %.4f (Overestimated)\n", sigma_naive))
+cat(sprintf("OASIS GetSn: %.4f (Accurate)\n", sigma_est))
+```
+
+### Time Constant Estimation
+
+The autoregressive decay factor $\gamma$ is theoretically related to the lag-1 autocorrelation of the calcium signal. A naive approach would be to estimate $\gamma$ directly using the sample autocorrelation of the fluorescence trace $y$.
+
+However, observation noise introduces a significant negative bias. Recall that $y_t = c_t + \epsilon_t$. Since the white noise $\epsilon_t$ is uncorrelated with the signal and itself (at non-zero lags), it increases the total variance (denominator) without affecting the autocovariance (numerator):
+
+$$
+\hat{\gamma}_{\text{naive}} = \frac{\text{Cov}(y_t, y_{t-1})}{\text{Var}(y_t)} = \frac{\text{Cov}(c_t, c_{t-1})}{\text{Var}(c_t) + \sigma^2} < \gamma_{\text{true}}.
+$$
+
+To obtain an unbiased estimate, `roasis` implements a bias-corrected estimator via a low-level interface `GetDecay()`. It utilizes the noise level $\hat{\sigma}$ estimated in the previous step to subtract the noise variance from the denominator:
+
+$$
+\hat{\gamma}_{\text{corrected}} = \frac{\text{Cov}(y_t, y_{t-1})}{\text{Var}(y_t) - \hat{\sigma}^2}.
+$$
+
+The following example demonstrates how the correction improves the estimation accuracy:
+
+```{r decay_estimation}
+# 1. Naive estimation (Lag-1 Autocorrelation)
+# This is mathematically equivalent to fitting an AR(1) without noise awareness
+gamma_naive <- ar(y_trace, order.max = 1, method = "yw")$ar
+
+# 2. Corrected estimation using OASIS
+# We pass the previously estimated noise (sigma_est) to the function
+gamma_corrected <- GetDecay(y_trace, sn = sigma_est)
+
+# Compare with Ground Truth (g = 0.95)
+cat(sprintf("True Gamma:      %.4f\n", 0.95))
+cat(sprintf("Naive Estimate:  %.4f (Underestimated due to noise)\n", gamma_naive))
+cat(sprintf("OASIS Corrected: %.4f (Close to truth)\n", gamma_corrected))
+```
+
+### Basic Interface: `oasis`
+
+While `GetSn`, `GetDecay`, and `oasis_ar1` allow for granular control, `roasis` provides a unified high-level interface `oasis()` to streamline the workflow.
+
+This wrapper automatically orchestrates the entire pipeline:
+
+1.  Parameter Estimation: If `g` or `lam` are not provided, it calls the estimators described above to infer them from the data.
+2.  Hyperparameter Tuning: It sets the sparsity penalty $\lambda$ heuristically based on the estimated noise level ($\lambda \approx 2\hat{\sigma}$).
+3.  Solver Execution: It passes the estimated parameters to the C++ backend.
+4.  Performance Evaluation: If the input is a simulation object, it automatically compares the result against the ground truth.
+
+#### Processing Simulation Objects
+
+When passing a `calcium_sim` object, the function automatically iterates over all neurons and computes performance metrics (Correlation and RMSE).
+
+```{r basic_interface_sim}
+# Recall we simulated 5 neurons in 'sim_data'
+# The wrapper handles the matrix input automatically
+fit_all <- oasis(sim_data)
+
+# Print the summary (shows mean performance across all neurons)
+print(fit_all)
+```
+
+#### Visualizing the Results
+
+Since `roasis` is designed as a lightweight computational toolkit, it does not enforce a specific plotting system. Instead, the results are returned as standard vectors, allowing for flexible visualization using base R graphics or `ggplot2`.
+
+Here, we visualize the deconvolution result for the first neuron. We overlay the inferred calcium trace (red) on top of the noisy fluorescence data (gray), and mark the detected spikes using rug ticks.
+
+```{r viz_result, fig.width=7, fig.height=5}
+# Extract data for the first neuron
+neuron_idx <- 1
+y_raw <- sim_data$Y[neuron_idx, ]   # The noisy input
+c_est <- fit_all[[neuron_idx]]$c    # The denoised output
+s_est <- fit_all[[neuron_idx]]$s    # The inferred spikes
+
+# Setup the plot area
+plot(y_raw, type = "n", 
+     main = "OASIS Deconvolution Result (Neuron 1)",
+     xlab = "Time Frame", ylab = "Fluorescence",
+     ylim = range(c(y_raw, c_est)))
+
+# 1. Plot the noisy raw data in the background
+lines(y_raw, col = "darkgray", lwd = 1)
+
+# 2. Overlay the denoised calcium trace
+lines(c_est, col = "firebrick", lwd = 2)
+
+# 3. Add rug plot for detected spikes (optional visualization)
+# We plot a tick mark wherever a spike is inferred
+spike_times <- which(s_est > 0.01) # Threshold slightly to avoid numerical zeros
+rug(spike_times, col = "firebrick", ticksize = 0.03, side = 1)
+
+legend("topright", 
+       legend = c("Raw Fluorescence", "Inferred Calcium", "Spikes"),
+       col = c("darkgray", "firebrick", "firebrick"), 
+       lwd = c(1, 2, 1), 
+       lty = c(1, 1, NA), 
+       pch = c(NA, NA, "|"))
+```
+
+### Processing Raw Data (Real-World Usage)
+In real experiments, you typically work with raw numeric vectors or matrices rather than simulation objects. The oasis() function supports these inputs natively.
+
+It will automatically perform the parameter estimation steps (GetSn and GetDecay) internally if they are not provided.
+
+```{r raw, echo=TRUE}
+# Simulate a scenario where we only have the raw fluorescence trace
+# (e.g., loaded from a CSV or TIFF file)
+y_vector <- sim_data$Y[2, ]
+
+# Run OASIS directly on the vector
+# Note: We do not need to specify 'g' or 'lam'; they are auto-estimated.
+fit_real <- oasis(y_vector)
+
+# Inspect the result
+print(fit_real)
+
+# Access the denoised signal
+head(fit_real$c)
+```
+
+## References
+
+1. Friedrich J, Zhou P, Paninski L (2017). Fast online deconvolution of calcium imaging data. *PLoS Computational Biology*, 13(3): e1005423. doi:10.1371/journal.pcbi.1005423.
