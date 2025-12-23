@@ -12,4 +12,12 @@ A compact R edition of Online Active Set method to Infer Spikes (OASIS) by Fried
 Friedrich J, Zhou P, Paninski L (2017). Fast online deconvolution of calcium 
 imaging data. PLoS Comput Biol 13(3): e1005423.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/Zenobiaql/oasisBayeStat2025fall}
+  \item Report bugs at \url{https://github.com/Zenobiaql/oasisBayeStat2025fall/issues}
+}
+
+}
 \keyword{internal}

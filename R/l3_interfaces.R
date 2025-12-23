@@ -69,8 +69,11 @@ oasis <- function(x, ...) {
 #'   autocorrelation of the data using \code{\link{GetDecay}}.
 #' @param lam Numeric scalar (optional). The sparsity penalty parameter.
 #'   If \code{NULL} (default), it is estimated heuristically based on the noise 
-#'   level (\eqn{\lambda \approx 2 \cdot \sigma}).
+#'   level (\eqn{\lambda \approx 2 \cdot \sigma}) or iteratively.
 #' @param s_min Numeric scalar. Minimum spike magnitude constraint.
+#' @param optimize Logical. If \code{TRUE}, uses an iterative optimization 
+#'   on decimated data to estimate \code{g} and \code{lam}. 
+#'   Ignored if \code{g} and \code{lam} are provided manually.
 #' @param ... Additional arguments ignored.
 #'
 #' @return An object of class \code{"oasis_fit"} containing:
@@ -88,62 +91,95 @@ oasis <- function(x, ...) {
 #' # Call the default method explicitly (or via generic)
 #' fit <- oasis(y_vec, g = 0.95)
 #' print(fit)
+#' 
+#' fit_opt <- oasis(y_vec, optimize = TRUE)
+#' print(fit_opt)
 #'
 #' @seealso \code{\link{oasis}}
 #' @export
-oasis.default <- function(x, g = NULL, lam = NULL, s_min = 0, ...){
+oasis.default <- function(x, g = NULL, lam = NULL, s_min = 0, optimize = FALSE, ...) {
+  
   if(is.matrix(x) && nrow(x) == 1)
     x <- as.vector(x)
+  
+  is_matrix_input <- is.matrix(x)
+  
+  if (is_matrix_input) {
+    row_vars <- apply(x, 1, var)
+    best_idx <- which.max(row_vars)
+    y_rep <- as.numeric(x[best_idx, ])
+  } else {
+    y_rep <- as.numeric(x)
+  }
+  
+  final_g <- g
+  final_lam <- lam
+  
+  g_source <- if(is.null(g)) "unknown" else "user-provided"
+  lam_source <- if(is.null(lam)) "unknown" else "user-provided"
+  
+  if (is.null(final_g) || is.null(final_lam)) {
     
-  if(is.matrix(x)){
-    res_list <- apply(x, 1, function(row){
-      oasis.default(row, g = g, lam = lam, s_min = s_min, ...)
-    }, simplify = FALSE)
-    
+    if (optimize) {
+      opt_params <- estimate_params_iterative(y_rep, decimate = 10)
+      
+      if (is.null(final_g)) {
+        final_g <- opt_params$g
+        g_source <- if(is_matrix_input) "optimized (global/decimated)" else "optimized (decimated)"
+      }
+      
+      if (is.null(final_lam)) {
+        final_lam <- opt_params$lam
+        lam_source <- if(is_matrix_input) "optimized (global/RSS)" else "optimized (RSS constraint)"
+      }
+      
+      if(is_matrix_input) {
+        message(sprintf("OASIS Global Params (from neuron %d): g=%.4f, lam=%.4f", best_idx, final_g, final_lam))
+      }
+      
+    }
+    else{
+      est_sn <- GetSn(y_rep) 
+      
+      if (is.null(final_g)) {
+        final_g <- GetDecay(y_rep, sn = est_sn)
+        g_source <- if(is_matrix_input) "estimated (global/autocorr)" else "estimated (autocorr)"
+      }
+      
+      if (is.null(final_lam)) {
+        final_lam <- 2.0 * est_sn
+        lam_source <- if(is_matrix_input) "heuristic (global/2*sn)" else "heuristic (2*sn)"
+      }
+    }
+  }
+  
+  construct_result <- function(y_vec) {
+    fit <- oasis_ar1(y_vec, g = final_g, lam = final_lam, s_min = s_min)
+    current_sn <- GetSn(y_vec)
+    res <- list(
+      c = fit$c,
+      s = fit$s,
+      pars = list(
+        g = final_g, 
+        lam = final_lam, 
+        s_min = s_min,
+        sn = current_sn,      
+        g_source = g_source,   
+        lam_source = lam_source 
+      )
+    )
+    class(res) <- c("oasis_fit", "list")
+    return(res)
+  }
+  
+  if (is_matrix_input) {
+    res_list <- apply(x, 1, construct_result, simplify = FALSE)
     class(res_list) <- c("oasis_multi_fit", "list")
     return(res_list)
+    
+  } else {
+    return(construct_result(as.numeric(x)))
   }
-  
-  y <- as.numeric(x)
-  
-  estimated_sn <- NULL
-  if (is.null(g) || is.null(lam)) {
-    estimated_sn <- GetSn(y)
-  }
-  
-  if (is.null(g)) {
-    g <- GetDecay(y, sn = estimated_sn)
-    g_source <- "estimated"
-  }
-  else{
-    g_source <- "user-provided"
-  }
-  
-  if (is.null(lam)) {
-    lam <- 2.0 * estimated_sn
-    lam_source <- "heuristic (2*sn)"
-  }
-  else{
-    lam_source <- "user-provided"
-  }
-  
-  fit <- oasis_ar1(y, g = g, lam = lam, s_min = s_min)
-  
-  res <- list(
-    c = fit$c,
-    s = fit$s,
-    pars = list(
-      g = g, 
-      lam = lam, 
-      s_min = s_min, 
-      sn = if(!is.null(estimated_sn)) estimated_sn else NA,
-      g_source = g_source,
-      lam_source = lam_source
-    )
-  )
-  
-  class(res) <- c("oasis_fit", "list")
-  return(res)
 }
 
 

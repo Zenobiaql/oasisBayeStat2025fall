@@ -4,7 +4,7 @@
 \alias{oasis.default}
 \title{OASIS Deconvolution for Raw Data (Vector/Matrix)}
 \usage{
-\method{oasis}{default}(x, g = NULL, lam = NULL, s_min = 0, ...)
+\method{oasis}{default}(x, g = NULL, lam = NULL, s_min = 0, optimize = FALSE, ...)
 }
 \arguments{
 \item{x}{Numeric vector or matrix. The fluorescence data.}
@@ -15,9 +15,13 @@ autocorrelation of the data using \code{\link{GetDecay}}.}
 
 \item{lam}{Numeric scalar (optional). The sparsity penalty parameter.
 If \code{NULL} (default), it is estimated heuristically based on the noise 
-level (\eqn{\lambda \approx 2 \cdot \sigma}).}
+level (\eqn{\lambda \approx 2 \cdot \sigma}) or iteratively.}
 
 \item{s_min}{Numeric scalar. Minimum spike magnitude constraint.}
+
+\item{optimize}{Logical. If \code{TRUE}, uses an iterative optimization 
+on decimated data to estimate \code{g} and \code{lam}. 
+Ignored if \code{g} and \code{lam} are provided manually.}
 
 \item{...}{Additional arguments ignored.}
 }
@@ -42,6 +46,9 @@ y_vec <- dat$Y # Extract raw vector
 # Call the default method explicitly (or via generic)
 fit <- oasis(y_vec, g = 0.95)
 print(fit)
+
+fit_opt <- oasis(y_vec, optimize = TRUE)
+print(fit_opt)
 
 }
 \seealso{

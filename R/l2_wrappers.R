@@ -150,3 +150,11 @@ oasis_ar1 <- function(y, g, lam = 0, s_min = 0) {
   
   oasisAR1_cpp(y, g, lam, s_min)
 }
+
+#' Estimate Noise using MAD (Fast)
+#' 
+#' @noRd
+GetSnMAD <- function(y) {
+  params <- estimate_parameters_cpp(y) 
+  return(params$sn)
+}

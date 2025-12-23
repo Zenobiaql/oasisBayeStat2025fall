@@ -67,7 +67,7 @@ NULL
 #' This function is not intended to be called directly by users. 
 #' Please use the R wrapper function \code{oasis_ar1()}.
 #' 
-#' @noRd
+#' @keywords internal
 oasisAR1_cpp <- function(y, g, lam, s_min) {
     .Call(`_oasisBayeStat2025fall_oasisAR1_cpp`, y, g, lam, s_min)
 }

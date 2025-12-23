@@ -1,10 +1,10 @@
 ---
-title: "Introduction to roasis"
+title: "Introduction to oasisBayeStat2025fall"
 author: "Qilin Zhang"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Introduction to roasis}
+  %\VignetteIndexEntry{Introduction to oasisBayeStat2025fall}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,19 +17,11 @@ knitr::opts_chunk$set(
 library(oasisBayeStat2025fall)
 ```
 
-The `roasis` package provides a streamlined R implementation of the OASIS (Online Active Set method for Spikes) algorithm, focusing specifically on the core AR(1) deconvolution model, offering a lightweight and efficient solution powered by a C++ (Rcpp) backend.
-
-## Background
-
-Neural information is primarily transmitted via electrical action potentials. These electrical events, often referred to as spikes, trigger intracellular calcium transients, serving as an optical proxy for neuronal activity. However, due to the slow calcium decay kinetics, fluorescence signals evoked by high-frequency spiking tend to temporally summate. 
-
-By assuming that calcium decay kinetics are independent of concentration and the fluorescence intensity is proportional to calcium level, we can model the relationship between fluorescence and spiking as a Linear Time-Invariant (LTI) system with Gaussian noise. In this framework, the observed fluorescence is mathematically the convolution of the spike train with the calcium impulse response. 
-
-By modeling this response as an autoregressive process (i.e., exponential decay), the deconvolution problem can be solved efficiently. This is the core principle behind **OASIS** (Online Active Set method to Infer Spikes). The `roasis` package provides a compact R implementation of this method, allowing users to easily deconvolve fluorescence traces into underlying neuronal activity.
+The `oasisBayeStat2025fall` package provides a streamlined R implementation of the OASIS (Online Active Set method for Spikes) algorithm, focusing specifically on the core AR(1) deconvolution model, offering a lightweight and efficient solution powered by a C++ (Rcpp) backend.
 
 ## Data Simulation and the AR(1) Model
 
-To validate the performance of the deconvolution algorithm, `roasis` provides a built-in simulation engine. The synthetic data generation is grounded in the Linear Time-Invariant (LTI) system assumption.
+To validate the performance of the deconvolution algorithm, `oasisBayeStat2025fall` provides a built-in simulation engine. The synthetic data generation is grounded in the Linear Time-Invariant (LTI) system assumption.
 
 Specifically, we assume that in the absence of new spikes, the calcium concentration $c_t$ decays exponentially. In the discrete-time domain, this dynamic is modeled as an AutoRegressive process of order $p$ (AR($p$)). For an AR(1) process, the model is defined as:
 $$
@@ -41,7 +33,7 @@ Assuming the noise is white and Gaussian, the observed fluorescence trace $y_t$ 
 $$
 y_t = c_t + \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, \sigma^2).
 $$
-The `generate_data()` function provides a C++ implementation for efficient synthetic data generation.
+The `generate_data` function provides a C++ implementation for efficient synthetic data generation.
 
 ```{r syn_data_generation, echo=TRUE}
 # Simulate a dataset with 5 neurons and standard decay kinetics (g=0.95)
@@ -139,7 +131,7 @@ By iteratively merging these violating time points into pools and updating their
 
 ## Implementation
 
-`roasis` provides low-level and high-level interfaces to perform OASIS.
+`oasisBayeStat2025fall` provides low-level and high-level interfaces to perform OASIS.
 
 ### Core Solver: `oasis_ar1`
 
@@ -159,13 +151,13 @@ fit_core <- oasis_ar1(sim_data$Y[1, ], g = true_g, lam = true_lambda)
 str(fit_core)
 ```
 
-### Noise Estimation
+### Noise Estimation: `GetSn`
 
-Usually $\lambda$ is specified by $2\sigma$, so we should estimate $\sigma^2$ from data. `roasis` provides a low-level interface for such estimation. 
+Usually $\lambda$ is specified by $2\sigma$, so we should estimate $\sigma^2$ from data. `oasisBayeStat2025fall` provides a low-level interface for such estimation. 
 
-A naive approach like calculating the standard deviation of the raw trace (`sd(y)`) is problematic because it conflates the variance of the calcium signal with the observation noise, leading to overestimation.
+A naive approach like calculating the standard deviation of the raw trace is problematic because it conflates the variance of the calcium signal with the observation noise, leading to overestimation.
 
-To address this, `roasis` implements a robust estimator based on the Power Spectral Density (PSD). Since calcium transients are predominantly low-frequency signals, the noise floor can be accurately isolated by examining the power in the high-frequency band (default: normalized frequency range $[0.25, 0.5]$).
+To address this, `oasisBayeStat2025fall` implements a robust estimator based on the Power Spectral Density (PSD). Since calcium transients are predominantly low-frequency signals, the noise floor can be accurately isolated by examining the power in the high-frequency band (default: normalized frequency range $[0.25, 0.5]$).
 
 ```{r noise_estimation, echo=TRUE}
 # Let's use the first neuron from our simulated data
@@ -186,7 +178,7 @@ cat(sprintf("Naive sd():  %.4f (Overestimated)\n", sigma_naive))
 cat(sprintf("OASIS GetSn: %.4f (Accurate)\n", sigma_est))
 ```
 
-### Time Constant Estimation
+### Time Constant Estimation: `GetDecay`
 
 The autoregressive decay factor $\gamma$ is theoretically related to the lag-1 autocorrelation of the calcium signal. A naive approach would be to estimate $\gamma$ directly using the sample autocorrelation of the fluorescence trace $y$.
 
@@ -196,7 +188,7 @@ $$
 \hat{\gamma}_{\text{naive}} = \frac{\text{Cov}(y_t, y_{t-1})}{\text{Var}(y_t)} = \frac{\text{Cov}(c_t, c_{t-1})}{\text{Var}(c_t) + \sigma^2} < \gamma_{\text{true}}.
 $$
 
-To obtain an unbiased estimate, `roasis` implements a bias-corrected estimator via a low-level interface `GetDecay()`. It utilizes the noise level $\hat{\sigma}$ estimated in the previous step to subtract the noise variance from the denominator:
+To obtain an unbiased estimate, `oasisBayeStat2025fall` implements a bias-corrected estimator via a low-level interface `GetDecay`. It utilizes the noise level $\hat{\sigma}$ estimated in the previous step to subtract the noise variance from the denominator:
 
 $$
 \hat{\gamma}_{\text{corrected}} = \frac{\text{Cov}(y_t, y_{t-1})}{\text{Var}(y_t) - \hat{\sigma}^2}.
@@ -219,14 +211,14 @@ cat(sprintf("Naive Estimate:  %.4f (Underestimated due to noise)\n", gamma_naive
 cat(sprintf("OASIS Corrected: %.4f (Close to truth)\n", gamma_corrected))
 ```
 
-### Basic Interface: `oasis`
+### High-Level Interface: `oasis`
 
-While `GetSn`, `GetDecay`, and `oasis_ar1` allow for granular control, `roasis` provides a unified high-level interface `oasis()` to streamline the workflow.
+While `GetSn`, `GetDecay`, and `oasis_ar1` allow for granular control, `oasisBayeStat2025fall` provides a unified high-level interface `oasis` to streamline the workflow.
 
 This wrapper automatically orchestrates the entire pipeline:
 
-1.  Parameter Estimation: If `g` or `lam` are not provided, it calls the estimators described above to infer them from the data.
-2.  Hyperparameter Tuning: It sets the sparsity penalty $\lambda$ heuristically based on the estimated noise level ($\lambda \approx 2\hat{\sigma}$).
+1.  Parameter Estimation: If `g` is not provided, it calls the estimators described above to infer them from the data.
+2.  Hyperparameter Tuning: It sets the sparsity penalty `lam` heuristically based on the estimated noise level ($\lambda \approx 2\hat{\sigma}$). If user enable `optimize` the hyperparameter will be adapted by the residual.
 3.  Solver Execution: It passes the estimated parameters to the C++ backend.
 4.  Performance Evaluation: If the input is a simulation object, it automatically compares the result against the ground truth.
 
@@ -245,7 +237,7 @@ print(fit_all)
 
 #### Visualizing the Results
 
-Since `roasis` is designed as a lightweight computational toolkit, it does not enforce a specific plotting system. Instead, the results are returned as standard vectors, allowing for flexible visualization using base R graphics or `ggplot2`.
+Since `oasisBayeStat2025fall` is designed as a lightweight computational toolkit, it does not enforce a specific plotting system. Instead, the results are returned as standard vectors, allowing for flexible visualization using base R graphics or `ggplot2`.
 
 Here, we visualize the deconvolution result for the first neuron. We overlay the inferred calcium trace (red) on top of the noisy fluorescence data (gray), and mark the detected spikes using rug ticks.
 
@@ -282,7 +274,7 @@ legend("topright",
 ```
 
 ### Processing Raw Data (Real-World Usage)
-In real experiments, you typically work with raw numeric vectors or matrices rather than simulation objects. The oasis() function supports these inputs natively.
+In real experiments, you typically work with raw numeric vectors or matrices rather than simulation objects. The `oasis` function supports these inputs natively.
 
 It will automatically perform the parameter estimation steps (GetSn and GetDecay) internally if they are not provided.
 

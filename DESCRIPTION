@@ -1,7 +1,7 @@
 Package: oasisBayeStat2025fall
 Type: Package
 Title: A Streamlined R Realization of OASIS
-Version: 1.0.0
+Version: 1.0.1
 Date: 2025-12-16
 Author: Qilin Zhang
 Maintainer: Qilin Zhang <zhangqilin8879@mail.ustc.edu.cn>

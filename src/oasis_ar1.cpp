@@ -37,7 +37,7 @@ struct Pool {
 //' This function is not intended to be called directly by users. 
 //' Please use the R wrapper function \code{oasis_ar1()}.
 //' 
-//' @noRd
+//' @keywords internal
 // [[Rcpp::export]]
 List oasisAR1_cpp(NumericVector y, double g, double lam, double s_min){
   int T = y.size();
